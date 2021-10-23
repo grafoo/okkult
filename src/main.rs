@@ -11,9 +11,10 @@ struct State {
     tilemap: Vec<Vec<Tile>>,
     world: World,
     player: Entity,
+    cipher_shard_connection_points: Vec<Point>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 struct Positionable {
     x: i32,
     y: i32,
@@ -26,7 +27,7 @@ struct Renderable {
     background_color: RGB,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 struct Identifyable(u8);
 
 #[derive(Clone, Copy)]
@@ -40,7 +41,23 @@ struct Collectable {
     collector: Option<Collectorable>,
 }
 
-const CIPHER_SHARD: FontCharType = 15;
+struct Connectable {
+    connection: Option<Identifyable>,
+    connector: Option<Identifyable>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Activateable {
+    state: bool,
+    activator: Option<Identifyable>,
+}
+
+struct Activatorable {
+    id: Identifyable,
+}
+
+const CIPHER_SHARD_GLYPH: FontCharType = 15;
+const CIPHER_SHARD_CONNECTION_GLYPH: FontCharType = 7;
 const FLOOR_TYLE_GLYPH: FontCharType = 250;
 
 fn render_positionable(render: Renderable, position: &mut Positionable, bterm: &mut BTerm) {
@@ -73,7 +90,7 @@ fn tick_for_tilemap(state: &mut State, bterm: &mut BTerm) {
                     bterm.set(
                         x,
                         y,
-                        RGB::named(GRAY25),
+                        RGB::named(GRAY15),
                         RGB::named(BLACK),
                         FLOOR_TYLE_GLYPH,
                     );
@@ -118,8 +135,65 @@ fn process_keyboard_input(state: &mut State, bterm: &mut BTerm) {
             VirtualKeyCode::D => {
                 drop_collectable(state);
             }
+            VirtualKeyCode::C => {
+                connect(state);
+            }
+            VirtualKeyCode::A => {
+                let id = get_player_activator_id(state);
+                activate(state, id);
+            }
             _ => {}
         },
+    }
+}
+
+fn get_player_position(state: &mut State) -> Positionable {
+    *state
+        .world
+        .entry(state.player)
+        .unwrap()
+        .get_component::<Positionable>()
+        .unwrap()
+}
+
+fn get_player_collector_id(state: &mut State) -> Identifyable {
+    state
+        .world
+        .entry(state.player)
+        .unwrap()
+        .get_component::<Collectorable>()
+        .unwrap()
+        .id
+}
+
+fn get_player_activator_id(state: &mut State) -> Identifyable {
+    get_player_collector_id(state)
+}
+
+fn connect(state: &mut State) {
+    let player_position = get_player_position(state);
+    let player_collector_id = get_player_collector_id(state);
+    for (collectable, collectable_position, connectable) in
+        <(&mut Collectable, &Positionable, &mut Connectable)>::query().iter_mut(&mut state.world)
+    {
+        if *collectable_position == player_position {
+            connectable.connector = Some(player_collector_id);
+            console::log("Connected");
+        }
+    }
+}
+
+fn activate(state: &mut State, activator_id: Identifyable) {
+    for (activateable, activateable_position, connectable) in
+        <(&mut Activateable, &Positionable, &mut Connectable)>::query().iter_mut(&mut state.world)
+    {
+        if let Some(connector_id) = connectable.connector {
+            if connector_id == activator_id {
+                connectable.connector = None;
+                activateable.state = true;
+                console::log("Activated");
+            }
+        }
     }
 }
 
@@ -176,11 +250,67 @@ fn tick_for_render_positionables(state: &mut State, bterm: &mut BTerm) {
     }
 }
 
+fn tick_for_activateables(state: &mut State, bterm: &mut BTerm) {
+    let mut maybe_activateable_positions: Vec<(&mut Activateable, &Positionable)> =
+        <(&mut Activateable, &Positionable)>::query()
+            .iter_mut(&mut state.world)
+            .collect();
+
+    if maybe_activateable_positions.len() < 2 {
+        return;
+    }
+    let mut activateable_positions: Vec<(&mut Activateable, &Positionable)> = Vec::new();
+    for maybe_activateable_position in maybe_activateable_positions {
+        if maybe_activateable_position.0.state {
+            activateable_positions.push(maybe_activateable_position);
+        }
+        if activateable_positions.len() == 2 {
+            break;
+        }
+    }
+    if activateable_positions.len() < 2 {
+        return;
+    }
+
+    let mut activateable_position_1 = activateable_positions.remove(0);
+    let mut activateable_1 = activateable_position_1.0;
+    let position_1 = activateable_position_1.1;
+    let mut activateable_position_2 = activateable_positions.remove(0);
+    let mut activateable_2 = activateable_position_2.0;
+    let position_2 = activateable_position_2.1;
+
+    if activateable_1.state && activateable_2.state {
+        activateable_1.state = false;
+        activateable_2.state = false;
+        let line = line2d_vector(
+            Point::new(position_1.x, position_1.y),
+            Point::new(position_2.x, position_2.y),
+        );
+        for point in line {
+            state.cipher_shard_connection_points.push(point);
+        }
+    }
+}
+
+fn tick_for_cipher_shard_connections(state: &mut State, bterm: &mut BTerm) {
+    for point in &state.cipher_shard_connection_points {
+        bterm.set(
+            point.x,
+            point.y,
+            RGB::named(WHITE),
+            RGB::named(BLACK),
+            CIPHER_SHARD_CONNECTION_GLYPH,
+        );
+    }
+}
+
 impl GameState for State {
     fn tick(&mut self, bterm: &mut BTerm) {
         process_keyboard_input(self, bterm);
         bterm.cls();
         tick_for_tilemap(self, bterm);
+        tick_for_activateables(self, bterm);
+        tick_for_cipher_shard_connections(self, bterm);
         tick_for_render_positionables(self, bterm);
         tick_for_player(self, bterm);
     }
@@ -222,6 +352,9 @@ fn main() -> BError {
         Collectorable {
             id: Identifyable(1),
         },
+        Activatorable {
+            id: Identifyable(1),
+        },
     ));
 
     let tilemap = vec![vec![Tile::Floor; 50]; 80];
@@ -236,13 +369,21 @@ fn main() -> BError {
                 collector: None,
             },
             Renderable {
-                glyph: CIPHER_SHARD,
+                glyph: CIPHER_SHARD_GLYPH,
                 foreground_color: RGB::named(WHITE),
                 background_color: RGB::named(BLACK),
             },
             Positionable {
                 x: random_number_generator.range(0, 79),
                 y: random_number_generator.range(0, 49),
+            },
+            Connectable {
+                connection: None,
+                connector: None,
+            },
+            Activateable {
+                state: false,
+                activator: None,
             },
         ));
     }
@@ -251,6 +392,7 @@ fn main() -> BError {
         world: world,
         player: player,
         tilemap: tilemap,
+        cipher_shard_connection_points: Vec::new(),
     };
 
     main_loop(BTermBuilder::simple80x50().build()?, state)
