@@ -1,5 +1,6 @@
 use bracket_lib::prelude::*;
 use legion::*;
+use std::time::Instant;
 
 #[derive(Clone)]
 enum Tile {
@@ -12,6 +13,9 @@ struct State {
     world: World,
     player: Entity,
     cipher_shard_connection_points: Vec<Point>,
+    instant_time: Instant,
+    delta_time: u128,
+    animation: Animateable,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -54,6 +58,11 @@ struct Activateable {
 
 struct Activatorable {
     id: Identifyable,
+}
+
+struct Animateable {
+    duration: u128,
+    elapsed: u128,
 }
 
 const CIPHER_SHARD_GLYPH: FontCharType = 15;
@@ -293,11 +302,24 @@ fn tick_for_activateables(state: &mut State, bterm: &mut BTerm) {
 }
 
 fn tick_for_cipher_shard_connections(state: &mut State, bterm: &mut BTerm) {
+    let elapsed_time_percentile = state.animation.elapsed as f64 / state.animation.duration as f64;
+    let foreground_color = if elapsed_time_percentile < 0.125 {
+        RED
+    } else if elapsed_time_percentile <= 0.25 {
+        RED1
+    } else if elapsed_time_percentile <= 0.5 {
+        RED2
+    } else if elapsed_time_percentile <= 0.75 {
+        RED3
+    } else {
+        RED4
+    };
+
     for point in &state.cipher_shard_connection_points {
         bterm.set(
             point.x,
             point.y,
-            RGB::named(WHITE),
+            RGB::named(foreground_color),
             RGB::named(BLACK),
             CIPHER_SHARD_CONNECTION_GLYPH,
         );
@@ -306,6 +328,8 @@ fn tick_for_cipher_shard_connections(state: &mut State, bterm: &mut BTerm) {
 
 impl GameState for State {
     fn tick(&mut self, bterm: &mut BTerm) {
+        self.write_delta_time();
+        self.write_elapsed_animation_time();
         process_keyboard_input(self, bterm);
         bterm.cls();
         tick_for_tilemap(self, bterm);
@@ -335,6 +359,18 @@ impl State {
                     position.y = y;
                 }
             }
+        }
+    }
+
+    fn write_delta_time(&mut self) {
+        self.delta_time = self.instant_time.elapsed().as_millis();
+        self.instant_time = Instant::now();
+    }
+
+    fn write_elapsed_animation_time(&mut self) {
+        self.animation.elapsed += self.delta_time;
+        if self.animation.elapsed >= self.animation.duration {
+            self.animation.elapsed = 0;
         }
     }
 }
@@ -370,7 +406,7 @@ fn main() -> BError {
             },
             Renderable {
                 glyph: CIPHER_SHARD_GLYPH,
-                foreground_color: RGB::named(WHITE),
+                foreground_color: RGB::named(YELLOW),
                 background_color: RGB::named(BLACK),
             },
             Positionable {
@@ -393,6 +429,12 @@ fn main() -> BError {
         player: player,
         tilemap: tilemap,
         cipher_shard_connection_points: Vec::new(),
+        instant_time: Instant::now(),
+        delta_time: 0,
+        animation: Animateable {
+            duration: 1250,
+            elapsed: 0,
+        },
     };
 
     main_loop(BTermBuilder::simple80x50().build()?, state)
