@@ -16,6 +16,9 @@ struct State {
     instant_time: Instant,
     delta_time: u128,
     animation: Animateable,
+    player_is_positionable: bool,
+    assigned_player_position: Positionable,
+    player_path: Vec<Point>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -68,6 +71,10 @@ struct Animateable {
 const CIPHER_SHARD_GLYPH: FontCharType = 15;
 const CIPHER_SHARD_CONNECTION_GLYPH: FontCharType = 7;
 const FLOOR_TYLE_GLYPH: FontCharType = 250;
+
+const MOUSE_BUTTON_LEFT: usize = 0;
+const MOUSE_BUTTON_RIGHT: usize = 1;
+const MOUSE_BUTTON_MIDDLE: usize = 2;
 
 fn render_positionable(render: Renderable, position: &mut Positionable, bterm: &mut BTerm) {
     if position.x > 79 {
@@ -326,6 +333,44 @@ fn tick_for_cipher_shard_connections(state: &mut State, bterm: &mut BTerm) {
     }
 }
 
+fn tick_for_mouse(state: &mut State, bterm: &mut BTerm) {
+    let (mouse_position_x, mouse_position_y) = bterm.mouse_pos();
+
+    bterm.set(
+        mouse_position_x,
+        mouse_position_y,
+        RGB::named(WHITE),
+        RGB::named(BLACK),
+        to_cp437('X'),
+    );
+
+    if !state.player_is_positionable && get_player_position(state) != state.assigned_player_position
+    {
+        console::log(format!("{:?}", state.player_path));
+        if state.player_path.len() > 0 {
+            let step = state.player_path.pop().unwrap();
+            state.position_player(Some(step.x), Some(step.y), false);
+        }
+    } else {
+        state.player_is_positionable = true;
+    }
+
+    let input = INPUT.lock();
+    if input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) {
+        if state.player_is_positionable {
+            state.assigned_player_position.x = mouse_position_x;
+            state.assigned_player_position.y = mouse_position_y;
+            state.player_is_positionable = false;
+            let mut tmp = line2d_vector(
+                Point::new(get_player_position(state).x, get_player_position(state).y),
+                Point::new(mouse_position_x, mouse_position_y),
+            );
+            tmp.reverse();
+            state.player_path = tmp;
+        }
+    }
+}
+
 impl GameState for State {
     fn tick(&mut self, bterm: &mut BTerm) {
         self.write_delta_time();
@@ -336,6 +381,7 @@ impl GameState for State {
         tick_for_activateables(self, bterm);
         tick_for_cipher_shard_connections(self, bterm);
         tick_for_render_positionables(self, bterm);
+        tick_for_mouse(self, bterm);
         tick_for_player(self, bterm);
     }
 }
@@ -435,6 +481,9 @@ fn main() -> BError {
             duration: 1250,
             elapsed: 0,
         },
+        player_is_positionable: true,
+        assigned_player_position: Positionable { x: 0, y: 0 },
+        player_path: Vec::new(),
     };
 
     main_loop(BTermBuilder::simple80x50().build()?, state)
