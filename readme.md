@@ -1,6 +1,6 @@
-# OЖULT
+# ῺЖЏĿҬ
 
-Occult themed Roguelike.
+A occult themed Roguelike.
 
 # Plot
 
